@@ -1,5 +1,6 @@
-#! /bin/bash
 
+#! /bin/bash
+# -*- condig utf-8 -*-
 function init(){
 	export LANG=en_US.UTF-8
 	ok_level="OK - "
