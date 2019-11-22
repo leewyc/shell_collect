@@ -1,0 +1,170 @@
+#! /bin/bash
+
+function init(){
+	export LANG=en_US.UTF-8
+	ok_level="OK - "
+	warning_level="WARNING - "
+	critical_level="CRITICAL - "
+	level="$ok_level"
+	msg=""
+
+	SUFFIX=$(date +%s)
+	COUNTER_FILE=/tmp/fuxi_traffic_counter
+	FLAG=0
+}
+
+init
+
+function print_out(){
+	#statuscode=$1
+	msg=$1
+	info=$2
+	if [[ $msg =~ ^sd  ]]
+	then
+		echo "\"output\":\"$msg\":\"$info\"}]}"
+	else
+	#echo -n "{\"collection_flag\":0,\"error_info\":\"\",\"MSG\":[{\"status\":"
+    #echo -n $statuscode
+		#echo "\"output\":\"$msg\"}]}"
+		echo "\"$msg\"}]}"
+	fi
+}
+
+
+# This your business logic
+function real_line()
+{
+	pwd_online="/home/admin/"$1"collect_info_on"
+	if [ ! -d $pwd_online ];then
+	mkdir $pwd_online
+	else
+	rm -f $pwd_online/*
+	fi
+
+	pidstat -u  2 5 >>$pwd_online/$2r_pid.txt           #进程cpu使用率
+	iostat -c 1 10 >>$pwd_online/$2r_cpu.txt              #cpu使用
+	
+	`iostat -dx  1  10 >>$pwd_online/"$2"r_iostat.txt`  #io
+	cpu_status=`cat $pwd_online/$2r_cpu.txt |grep -v avg|grep -v Lin|awk '{sum+=$6}  END{if((sum/10)>50) print "cpu_free:"sum/10;else print "cpu_busy:"sum/10}'`  #输出cpu使用率，空闲小于50会报警
+	echo "cpu status is :"$cpu_status >> $pwd_online/info
+	print_out $cpu_status 
+	
+	array=(sda sdb sdc sde sdf sdg sdh sdi sdj sdk sdl)
+	for i in "${array[@]}";
+	do
+		cpu_io_iops=`cat $pwd_online/$2r_iostat.txt |grep $i|awk '{IOPS+=$4+$5} END{if((IOPS/10)>1.1){print "IOPS_high:"IOPS/10} else {print "IOPS_low:"IOPS/10}}'`;
+		echo $i" io_iops is :"$cpu_io_iops >> $pwd_online/info
+			if [ $cpu_io_iops=="IOPS_high:" ]
+			then
+					print_out $i $cpu_io_iops
+			else
+					print_out $i IOPS_low
+			fi
+	done
+	
+	for i in "${array[@]}";
+	do
+		cpu_io_hc=`cat $pwd_online/$2r_iostat.txt |grep $i|awk '{IOPS+=$6+$7} END{if((IOPS/10)>1.1){print "HC_high:"IOPS/10} else {print "HC_low:"IOPS/10}}'`;
+		echo $i" io_HC is :"$cpu_io_hc >> $pwd_online/info
+			if [ $cpu_io_hc=="HC_high:" ]
+			then
+					print_out $i $cpu_io_hc
+			else
+					print_out $i IOPS_low
+			fi
+	done
+	#print_out $cpu_io_iops
+	#cpu_io_io=`cat $pwd_online/$2r_iostat.txt |grep sda|awk '{IOPS+=$6+$7} END{if((IOPS/10)>10){print "IO_high"} else {print "IO_low"}}'`
+	#echo "io_iops is :"$cpu_io_io >> $pwd_online/info
+	#print_out $cpu_io_io
+	
+	`sudo tar -czvf "$pwd_online"/"$2"messages.tar.gz  /var/log/messages*   1>/dev/null 2>&1 `        #messages
+	`sudo dmesg > $pwd_online/"$2"dmesg.txt`                        #dmesg
+	`sudo netstat -luntp >$pwd_online/"$2"netstat.txt`
+	
+	}
+
+	
+function off_line(){
+
+	pwd_offline="/home/admin/"$1"collect_info_off"
+	if [ ! -d $pwd_offline ];then
+		mkdir  $pwd_offline
+	else
+		rm -f $pwd_offline/*
+	fi
+	`tsar --cpu -i 1 >>$pwd_offline/"$2"t_cpu.txt`
+	while read line
+	do
+		cpu_io_cpu=`echo "$line"|grep -v Time|grep -v  MAX|grep  -v MEAN|grep  -v MIN |awk '{if($7>2) print $1,$2,$3,$4,$5,$6,$7 }' `
+		if  [ -n "$cpu_io_cpu"  ]
+		then
+			echo "tsar_io_cpu":"$cpu_io_cpu" >> $pwd_offline/info
+		else
+			continue
+		fi
+		#print_out "$cpu_io_cpu"
+	done < $pwd_offline/$2t_cpu.txt
+	
+	`tsar --mem -i 5 >>$pwd_offline/"$2"t_mem.txt`
+	while read line
+	do 
+		history_mem=`echo "$line"|grep -v Time|grep -v M|awk '{if($2>1) print $1,$2,$3,$4,$5,$6,$7 }' `
+		if [ -n "$history_mem"  ]
+		then
+			echo "history_mem":"$history_mem" >> $pwd_offline/info
+		else
+			continue
+		fi
+		#print_out "$history_mem"
+	done < $pwd_offline/$2t_mem.txt
+	
+	
+	`tsar --tcp -i 5 >>$pwd_offline/"$2"t_tcp.txt`
+
+	`tsar --traffic -i 5 >>$pwd_offline/"$2"t_traffic.txt`
+	
+	while read line
+	do 
+		history_traffic=`echo $line|grep -v Time|grep -v M|awk '{io=$2+$3}{if(io>300) print $1,io}'`
+		if [ -n "$history_traffic"  ]
+		then
+			echo "history_traffic":"$history_traffic" >> $pwd_offline/info
+		else
+			continue
+		fi
+	done < $pwd_offline/"$2"t_traffic.txt
+	
+	`sudo tar -czvf $pwd_offline/messages.tar.gz  /var/log/messages* 1>/dev/null 2>&1`
+	`dmesg >> $pwd_offline/dmesg.txt`
+}
+
+function main()
+{
+	today=`date +%Y%m%d`
+	now="`date  +"%H-%M"`_"
+	case $1 in
+	real)
+		msg="start--------";
+		print_out $msg;
+		real_line $today $now;
+		msg="success--------";
+		print_out $msg;;
+	offline)
+		msg="start--------";
+		print_out $msg;
+		off_line $today $now;
+		msg="success--------";
+		print_out $msg;;
+	all)
+		real_line $today $now;
+		off_line $today $now;;
+	*)
+		echo -e "----------for example-----------\n 1:sh test1 real\n 2:sh test1 offline\n 3:sh test1 all"
+	esac
+
+
+
+}
+
+main $1
